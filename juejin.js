@@ -9,7 +9,7 @@
 const $ = require('./env').Env('掘金自动签到');
 const notify = $.isNode() ? require('./sendNotify') : '';
 const axios = require('axios').default;
-let cookiesArr = (process.env.JUEJIN_COOKIE || '').split('&'), message = '';
+let cookiesArr = process.env.JUEJIN_COOKIE ? process.env.JUEJIN_COOKIE.split('&') : [], message = '';
 const config = {
     // 掘金 API
     JUEJIN_API: 'https://api.juejin.cn',
@@ -30,7 +30,7 @@ const taskTypes = {
     11: '关注掘友任务',
     12: '收藏文章任务'
 };
-if (!Array.isArray(cookiesArr) || cookiesArr.length === 0) {
+if (!cookiesArr || cookiesArr.length === 0) {
     console.log('请设置环境变量【JUEJIN_COOKIE】\n');
     process.exit(1);
 }
@@ -84,6 +84,8 @@ async function main() {
     } else {
         await luckyDraw();
     }
+    await $.wait(1000);
+    await geMyLucky();
     console.log('开始执行十连抽...')
     message += `【十连抽详情】\n`
     if (!config.ENABLE_TEN_DRAW) {
@@ -113,10 +115,10 @@ async function main() {
  * @returns {Promise<void>}
  */
 async function taskList() {
-    const data = await sendRequest(config.JUEJIN_API + '/growth_api/v1/user_growth/task_list', 'post', {
+    let data = await sendRequest(config.JUEJIN_API + '/growth_api/v1/user_growth/task_list', 'post', {
         growth_type: 1
     });
-    const growthTasks = data.data.growth_tasks;
+    let growthTasks = data.data.growth_tasks;
     for (const taskArray in growthTasks) {
         // 1没任务，3社区学习，4社区影响力，5社区活跃、暂时做社区活跃任务
         if (growthTasks.hasOwnProperty(taskArray) && '5' === taskArray) {
@@ -129,11 +131,27 @@ async function taskList() {
                 for (let i = 0; i < task.limit - task.done; i++) {
                     await performTask(task);
                 }
-                message += `【${task.title}】已完成${task.done}/${task.limit}\n`;
             }
         }
     }
-    message += `【今日掘友分】+${data.data.today_jscore}\n`
+    await $.wait(2000);
+    // 任务完成后重新调用接口更新任务状态
+    data = await sendRequest(config.JUEJIN_API + '/growth_api/v1/user_growth/task_list', 'post', {
+        growth_type: 1
+    });
+    growthTasks = data.data.growth_tasks;
+    Object.entries(growthTasks).forEach(([growthId, tasks]) => {
+        if (['1', '3', '4'].includes(growthId)) {
+            return;
+        }
+        tasks = tasks.filter(task => task.task_id !== 4 && task.task_id !== 5);
+        if (tasks && tasks.length > 0) {
+            tasks.forEach(t => {
+                message += `【${t.title}】已完成${t.done}/${t.limit}\n`;
+            });
+            message += `【今日掘友分】+${data.data.today_jscore}\n`
+        }
+    });
 }
 
 /**
@@ -676,6 +694,18 @@ async function getCount() {
 async function luckyDraw() {
     const data = await sendRequest(config.JUEJIN_API + '/growth_api/v1/lottery/draw', 'post', '');
     message += `【抽奖信息】抽中了${data.data.lottery_name}\n`;
+}
+
+/**
+ * 获取幸运值
+ *
+ * @returns {Promise}
+ */
+async function geMyLucky() {
+    const data = await sendRequest(config.JUEJIN_API + '/growth_api/v1/lottery_lucky/my_lucky', 'post', {});
+    if ('success' === data.err_msg) {
+        message += `【当前幸运值】${data.data.total_value}/6000\n`
+    }
 }
 
 /**
